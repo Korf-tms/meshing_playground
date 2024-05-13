@@ -108,7 +108,7 @@ def add_innermost_ellipse(model, ellipse, resolution, center_point):
     return el
 
 
-def create_mesh(rays_list, ellipses_list, corner_points):
+def create_mesh(rays_list, ellipses_list, corner_points, filename=None):
     """
     Creates square mesh with subdomains determined by rays and ellipses
     """
@@ -160,11 +160,14 @@ def create_mesh(rays_list, ellipses_list, corner_points):
 
     gmsh.model.mesh.generate(dim=2)
     gmsh.model.mesh.removeDuplicateNodes()
-    current_directory = os.getcwd()
-    path = Path(current_directory) / 'mesh_output'
-    if not path.exists():
-        path.mkdir()
-    gmsh.write('mesh_output/test_out.msh')
+    if filename is not None:
+        gmsh.write(filename)
+    else:
+        current_directory = os.getcwd()
+        path = Path(current_directory) / 'mesh_output'
+        if not path.exists():
+            path.mkdir()
+        gmsh.write('mesh_output/test_out.msh')
 
 
 def create_xdmf_mesh_from_msh_file(filename):
