@@ -214,6 +214,19 @@ def create_xdmf_mesh_from_msh_file(filename):
     print(f"Mesh written to files: {filename}.xdmf, {filename}.h5")
 
 
+def create_xdmf_mesh_from_msh_with_cell_data(filename):
+    # based on
+    # https://jsdokken.com/dolfinx-tutorial/chapter3/subdomains.html#read-in-msh-files-with-dolfinx
+    mesh_in = meshio.read(f"{filename}.msh")
+    cell_data = mesh_in.get_cell_data("gmsh:physical", "triangle")
+    points = mesh_in.points[:, :2]  # cut the z-coordinates for 2d mesh TODO: use as parameter
+    cells = mesh_in.get_cells_type("triangle")
+    out_mesh = meshio.Mesh(points=points, cells={"triangle": cells},
+                           cell_data={"Domains": [cell_data]})
+    meshio.write(f"{filename}.xdmf", out_mesh)
+    print(f"Mesh written to files: {filename}.xdmf, {filename}.h5")
+
+
 if __name__ == "__main__":
     no_of_rays = 4
     rays = [Ray(2.0*pi*n/no_of_rays) for n in range(no_of_rays)]
