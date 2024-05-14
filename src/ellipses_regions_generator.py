@@ -106,10 +106,10 @@ def add_innermost_ellipse(model, ellipse, resolution, center_point):
     el_arcs = [model.add_ellipse_arc(startTag=points[i], centerTag=center_point, endTag=points[i+1],
                                      majorTag=points[major_axis_index]) for i in range(-1, 3)]
     el = model.add_curve_loop(el_arcs)
-    return el
+    return el, el_arcs
 
 
-def create_mesh(rays_list, ellipses_list, corner_points, filename=None):
+def create_mesh(rays_list, ellipses_list, corner_points, resolution_outer=10, resolution_inner=0.5, filename=None):
     """
     Creates square mesh with subdomains determined by rays and ellipses
     Due to ellipse construction at least 3 rays are needed.
@@ -120,10 +120,15 @@ def create_mesh(rays_list, ellipses_list, corner_points, filename=None):
     Known issue: Ellipse arcs will fail when the start and end points can be written as
     (x, y), (x, -y) or (x, y), (-x, y).
     """
-    ellipses_list.sort()
 
-    resolution_outer = 10
-    resolution_inner = 0.3
+    if len(rays_list) < 3:
+        raise ValueError('Due to the currently used ellipse construction at least 3 rays are needed.')
+
+    if len(ellipses_list) < 2:
+        raise ValueError('Internal subdomains need at least 2 ellipses.')
+
+    # sort ellipses to get the smallest, NOTE: would be sufficient only to find the smallest
+    ellipses_list.sort()
 
     # geometry init
     gmsh.initialize()
@@ -136,12 +141,23 @@ def create_mesh(rays_list, ellipses_list, corner_points, filename=None):
     border_points = [model.add_point(*point, meshSize=resolution_outer) for point in corner_points]
     lines_outer = [model.add_line(border_points[i], border_points[i+1]) for i in range(-1, len(corner_points)-1)]
     outer_loop = model.add_curve_loop(lines_outer)
-    # biggest ellipse is used as border, that is why the ellipses list was sorted
-    inner_loop = add_innermost_ellipse(model, ellipses_list[-1], resolution_inner, center_point)
+
+    # smallest ellipse is used as border, that is why the ellipses list was sorted
+    inner_loop, arcs_list = add_innermost_ellipse(model, ellipses_list[-1], resolution_inner, center_point)
+
+    # synchronize is needed before adding groups, or using a different interface
+    # https://gitlab.onelab.info/gmsh/gmsh/-/issues/2574
+    model.synchronize()
+    inner_boundary_tag = gmsh.model.add_physical_group(dim=1, tags=arcs_list)
+    gmsh.model.set_physical_name(dim=1, tag=inner_boundary_tag, name='Inner boundary')
+    outer_boundary_tag = gmsh.model.add_physical_group(dim=1, tags=lines_outer)
+    gmsh.model.set_physical_name(dim=1, tag=outer_boundary_tag, name='Outer boundary')
 
     plane_surface = model.add_plane_surface((outer_loop, inner_loop))
-    # model.add_physical(plane_surface, "Outer") TODO
-    # gmsh.model.add_physical_group()
+
+    model.synchronize()
+    outer_domain = gmsh.model.add_physical_group(dim=2, tags=[plane_surface])
+    gmsh.model.set_physical_name(dim=2, tag=outer_domain, name='Outer')
 
     # adds distinct regions, gradually filling the hole
     borders = compute_region_data(ellipses_list, rays_list)
@@ -160,7 +176,11 @@ def create_mesh(rays_list, ellipses_list, corner_points, filename=None):
         l1 = model.add_line(aux_points[3], aux_points[2])
         cc = model.add_curve_loop([arc1, l0, arc2, l1])
         region = model.add_plane_surface((cc,))
-        # model.add_physical(region, f'Region {counter}') TODO
+
+        model.synchronize()
+        region_tag = gmsh.model.add_physical_group(dim=2, tags=[region])
+        gmsh.model.set_physical_name(dim=2, tag=region_tag, name=f'Region {counter}')
+
         counter += 1
 
     model.synchronize()
@@ -176,6 +196,8 @@ def create_mesh(rays_list, ellipses_list, corner_points, filename=None):
         if not path.exists():
             path.mkdir()
         gmsh.write('mesh_output/test_out.msh')
+    # gmsh.finalize()
+    return gmsh.model
 
 
 def create_xdmf_mesh_from_msh_file(filename):
