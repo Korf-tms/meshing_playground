@@ -228,10 +228,13 @@ def create_xdmf_mesh_from_msh_with_cell_data(filename):
 
 
 if __name__ == "__main__":
-    no_of_rays = 4
-    rays = [Ray(2.0*pi*n/no_of_rays) for n in range(no_of_rays)]
-    ellipses = [Ellipse(2.0*k, 3.0*k) for k in (1, 2, 4)]
+    from math import e
+
+    magical_constant = pi/e/10  # to offset problematic symmetries
+    no_of_rays = 5
+    rays = [Ray(2.0*pi*n/no_of_rays + magical_constant) for n in range(no_of_rays)]
+    ellipses = [Ellipse(4.0*k, 3.0*k) for k in (2, 4, 5, 6, 7)]
     corners = [(50, -50, 0), (50, 50, 0), (-50, 50, 0), (-50, -50, 0)]
 
-    create_mesh(rays, ellipses, corners)
-    create_xdmf_mesh_from_msh_file('mesh_output/test_out')
+    model = create_mesh(rays, ellipses, corners)
+    create_xdmf_mesh_from_msh_with_cell_data('mesh_output/test_out')
