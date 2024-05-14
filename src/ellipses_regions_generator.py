@@ -27,7 +27,7 @@ class Ellipse:
 
 class Ray:
     """
-    Ray from origin given by angle from half-axis x > 0.
+    Ray from origin given by angle from half-axis (x = t, y = 0) t > 0.
     """
     def __init__(self, phi):
         self.phi = phi
@@ -50,7 +50,7 @@ def ray_and_ellipse_intersection(ray, ellipse):
     Compute the single intersection of a ray and an ellipse.
     :param ray:
     :param ellipse:
-    :return: intersection_point as tupple
+    :return: intersection_point as tuple
     """
     # easy peasy on computation on paper
     t = ellipse.a*ellipse.b/sqrt(ellipse.b**2*cos(ray.phi)**2 + ellipse.a**2*sin(ray.phi)**2)
@@ -82,17 +82,18 @@ def compute_region_data(ellipses_list, rays_list):
                 border_points.append(ray_and_ellipse_intersection(ray, ellipse))
             borders.append((border_points, (major_axis_smaller, major_axis_bigger)))
     # border points are ordered in the way what first two and second two are on the same ray
-    # they are norm-wise ordered in the pairs, first smaller then bigger, in the same way as points on major axes
+    # they are norm-wise ordered in the pairs, first smaller than bigger, in the same way as points on major axes
     return borders
 
 
 def add_innermost_ellipse(model, ellipse, resolution, center_point):
     """
     Function to add ellipse to a model. Will be used to add the hole to the box mesh.
-    :param model: (py)gmsh model
+    :param model: gmsh model
     :param ellipse: ellipse as instance of Ellipse class
     :param resolution: resolution of the ellipse points
     :param center_point: center point of the ellipse, as a point already in the model
+    :return: tag of the added ellipse, list of ellipse arcs tags
     """
     a = ellipse.a
     b = ellipse.b
@@ -111,6 +112,13 @@ def add_innermost_ellipse(model, ellipse, resolution, center_point):
 def create_mesh(rays_list, ellipses_list, corner_points, filename=None):
     """
     Creates square mesh with subdomains determined by rays and ellipses
+    Due to ellipse construction at least 3 rays are needed.
+    Note, that gmsh allows to set resolutions for individual points, might be worth to either:
+    a) use more granular approach and assign resolution to each ellipse
+    b) or use some different interface to set mesh size
+
+    Known issue: Ellipse arcs will fail when the start and end points can be written as
+    (x, y), (x, -y) or (x, y), (-x, y).
     """
     ellipses_list.sort()
 
@@ -119,7 +127,7 @@ def create_mesh(rays_list, ellipses_list, corner_points, filename=None):
 
     # geometry init
     gmsh.initialize()
-    model = gmsh.model.occ
+    model = gmsh.model.occ  # NOTE: "model" might be a confusing variable name :(
 
     # center point needed for ellipses
     center_point = model.add_point(*(0, 0, 0))
