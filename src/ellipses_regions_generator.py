@@ -86,29 +86,6 @@ def compute_region_data(ellipses_list, rays_list):
     return borders
 
 
-def add_innermost_ellipse(model, ellipse, resolution, center_point):
-    """
-    Function to add ellipse to a model. Will be used to add the hole to the box mesh.
-    :param model: gmsh model
-    :param ellipse: ellipse as instance of Ellipse class
-    :param resolution: resolution of the ellipse points
-    :param center_point: center point of the ellipse, as a point already in the model
-    :return: tag of the added ellipse, list of ellipse arcs tags
-    """
-    a = ellipse.a
-    b = ellipse.b
-    points = [(a, 0, 0), (0, b, 0), (-a, 0, 0), (0, -b, 0)]
-    points = [model.add_point(*point, meshSize=resolution) for point in points]
-    if a > b:
-        major_axis_index = 0
-    else:
-        major_axis_index = 1
-    el_arcs = [model.add_ellipse_arc(startTag=points[i], centerTag=center_point, endTag=points[i+1],
-                                     majorTag=points[major_axis_index]) for i in range(-1, 3)]
-    el = model.add_curve_loop(el_arcs)
-    return el, el_arcs
-
-
 def create_mesh(rays_list, ellipses_list, corner_points, resolution_outer=10, resolution_inner=0.5, filename=None):
     """
     Creates square mesh with subdomains determined by rays and ellipses
@@ -137,29 +114,8 @@ def create_mesh(rays_list, ellipses_list, corner_points, resolution_outer=10, re
     # center point needed for ellipses
     center_point = model.add_point(*(0, 0, 0))
 
-    # construction of the outer box and region between outer border and inner ellipse
-    border_points = [model.add_point(*point, meshSize=resolution_outer) for point in corner_points]
-    lines_outer = [model.add_line(border_points[i], border_points[i+1]) for i in range(-1, len(corner_points)-1)]
-    outer_loop = model.add_curve_loop(lines_outer)
-
-    # smallest ellipse is used as border, that is why the ellipses list was sorted
-    inner_loop, arcs_list = add_innermost_ellipse(model, ellipses_list[-1], resolution_inner, center_point)
-
-    # synchronize is needed before adding groups, or using a different interface
-    # https://gitlab.onelab.info/gmsh/gmsh/-/issues/2574
-    model.synchronize()
-    inner_boundary_tag = gmsh.model.add_physical_group(dim=1, tags=arcs_list)
-    gmsh.model.set_physical_name(dim=1, tag=inner_boundary_tag, name='Inner boundary')
-    outer_boundary_tag = gmsh.model.add_physical_group(dim=1, tags=lines_outer)
-    gmsh.model.set_physical_name(dim=1, tag=outer_boundary_tag, name='Outer boundary')
-
-    plane_surface = model.add_plane_surface((outer_loop, inner_loop))
-
-    model.synchronize()
-    outer_domain = gmsh.model.add_physical_group(dim=2, tags=[plane_surface])
-    gmsh.model.set_physical_name(dim=2, tag=outer_domain, name='Outer')
-
     # adds distinct regions, gradually filling the hole
+    outer_arcs = []  # hack-ish solution to hanging nodes
     borders = compute_region_data(ellipses_list, rays_list)
     counter = 0
     for border, axis_coo in borders:
@@ -176,12 +132,28 @@ def create_mesh(rays_list, ellipses_list, corner_points, resolution_outer=10, re
         l1 = model.add_line(aux_points[3], aux_points[2])
         cc = model.add_curve_loop([arc1, l0, arc2, l1])
         region = model.add_plane_surface((cc,))
+        outer_arcs.append(arc2)
 
+        # synchronize is needed before adding groups, or using a different interface
+        # https://gitlab.onelab.info/gmsh/gmsh/-/issues/2574
         model.synchronize()
         region_tag = gmsh.model.add_physical_group(dim=2, tags=[region])
         gmsh.model.set_physical_name(dim=2, tag=region_tag, name=f'Region {counter}')
 
         counter += 1
+
+    outer_arcs = outer_arcs[-len(rays_list):]  # outer ellipse is defined by the last big arcs
+    # construction of the outer box and region between outer border and inner ellipse
+    border_points = [model.add_point(*point, meshSize=resolution_outer) for point in corner_points]
+    lines_outer = [model.add_line(border_points[i], border_points[i+1]) for i in range(-1, len(corner_points)-1)]
+    outer_loop = model.add_curve_loop(lines_outer)
+    inner_loop = model.add_curve_loop(outer_arcs)
+
+    plane_surface = model.add_plane_surface((outer_loop, inner_loop))
+
+    model.synchronize()
+    outer_domain = gmsh.model.add_physical_group(dim=2, tags=[plane_surface])
+    gmsh.model.set_physical_name(dim=2, tag=outer_domain, name='Outer')
 
     model.synchronize()
     model.removeAllDuplicates()
