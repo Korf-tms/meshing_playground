@@ -227,14 +227,33 @@ def create_xdmf_mesh_from_msh_with_cell_data(filename):
     print(f"Mesh written to files: {filename}.xdmf, {filename}.h5")
 
 
-if __name__ == "__main__":
+def generate_tsx_mesh_with_regions(filename='tsx_ellipses_regions'):
+    # TODO: think through what are suitable inputs
+    x_axis = 4.375 / 2
+    y_axis = 3.5 / 2
+
+    magical_constant = 0.001
+    no_of_rays = 5
+    corners = [(50, -50, 0), (50, 50, 0), (-50, 50, 0), (-50, -50, 0)]
+    rays_list = [Ray(2.0*pi*n/no_of_rays + magical_constant) for n in range(no_of_rays)]
+    ellipses_list = [Ellipse(x_axis*k, y_axis*k) for k in (1, 1.3, 1.7, 2)]
+    _ = create_mesh(rays_list, ellipses_list, corners, filename=f'{filename}.msh')
+    create_xdmf_mesh_from_msh_with_cell_data(filename)
+
+
+def test():
     from math import e
 
-    magical_constant = pi/e/10  # to offset problematic symmetries
+    magical_constant = pi / e / 10  # to offset problematic symmetries
     no_of_rays = 5
-    rays = [Ray(2.0*pi*n/no_of_rays + magical_constant) for n in range(no_of_rays)]
-    ellipses = [Ellipse(4.0*k, 3.0*k) for k in (2, 4, 5, 6, 7)]
+    rays = [Ray(2.0 * pi * n / no_of_rays + magical_constant) for n in range(no_of_rays)]
+    ellipses = [Ellipse(4.0 * k, 3.0 * k) for k in (2, 4, 5, 6, 7)]
     corners = [(50, -50, 0), (50, 50, 0), (-50, 50, 0), (-50, -50, 0)]
 
     model = create_mesh(rays, ellipses, corners)
     create_xdmf_mesh_from_msh_with_cell_data('mesh_output/test_out')
+
+
+if __name__ == "__main__":
+    generate_tsx_mesh_with_regions()
+
