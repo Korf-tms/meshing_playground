@@ -22,7 +22,7 @@ if __name__ == '__main__':
     Q = dfx.fem.functionspace(mesh, ('DG', 0))
     k = dfx.fem.Function(Q)
 
-    for marker, value in zip(range(3, 3+num_of_domains), values):
+    for marker, value in zip(range(1, 1+num_of_domains), values):
         marked_cells = cell_tags.find(marker)
         k.x.array[marked_cells] = np.full_like(marked_cells, value)
 
