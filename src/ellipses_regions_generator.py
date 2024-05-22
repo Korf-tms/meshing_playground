@@ -86,13 +86,16 @@ def compute_region_data(ellipses_list, rays_list):
     return borders
 
 
-def create_mesh(rays_list, ellipses_list, corner_points, resolution_outer=10, resolution_inner=0.5, filename=None):
+def create_mesh(rays_list, ellipses_list, corner_points, resolution_outer=10, resolution_inner=0.1, filename=None,
+                return_model=False):
     """
     Creates square mesh with subdomains determined by rays and ellipses
     Due to ellipse construction at least 3 rays are needed.
     Note, that gmsh allows to set resolutions for individual points, might be worth to either:
     a) use more granular approach and assign resolution to each ellipse
     b) or use some different interface to set mesh size
+
+    Function has an option to either return the model for future tinkering or just finalize gmsh.
 
     Known issue: Ellipse arcs will fail when the start and end points can be written as
     (x, y), (x, -y) or (x, y), (-x, y).
@@ -116,6 +119,7 @@ def create_mesh(rays_list, ellipses_list, corner_points, resolution_outer=10, re
 
     # adds distinct regions, gradually filling the hole
     outer_arcs = []  # hack-ish solution to hanging nodes
+    inner_arcs = []  # hack-ish solution for the inner boundary tags TODO: rewrite the logic completely
     borders = compute_region_data(ellipses_list, rays_list)
     counter = 0
     for border, axis_coo in borders:
@@ -133,6 +137,7 @@ def create_mesh(rays_list, ellipses_list, corner_points, resolution_outer=10, re
         cc = model.add_curve_loop([arc1, l0, arc2, l1])
         region = model.add_plane_surface((cc,))
         outer_arcs.append(arc2)
+        inner_arcs.append(arc1)
 
         # synchronize is needed before adding groups, or using a different interface
         # https://gitlab.onelab.info/gmsh/gmsh/-/issues/2574
@@ -142,12 +147,14 @@ def create_mesh(rays_list, ellipses_list, corner_points, resolution_outer=10, re
 
         counter += 1
 
-    outer_arcs = outer_arcs[-len(rays_list):]  # outer ellipse is defined by the last big arcs
-    # construction of the outer box and region between outer border and inner ellipse
+    outer_most_arcs = outer_arcs[-len(rays_list):]  # outer ellipse is defined by the last big arcs
+    inner_most_arcs = inner_arcs[:len(rays_list)]  # hack-ish way to find inner ellipse arcs
+
+    # construction of the outer box and region between outer border and outermost ellipse
     border_points = [model.add_point(*point, meshSize=resolution_outer) for point in corner_points]
     lines_outer = [model.add_line(border_points[i], border_points[i+1]) for i in range(-1, len(corner_points)-1)]
     outer_loop = model.add_curve_loop(lines_outer)
-    inner_loop = model.add_curve_loop(outer_arcs)
+    inner_loop = model.add_curve_loop(outer_most_arcs)
 
     plane_surface = model.add_plane_surface((outer_loop, inner_loop))
 
@@ -155,11 +162,20 @@ def create_mesh(rays_list, ellipses_list, corner_points, resolution_outer=10, re
     outer_domain = gmsh.model.add_physical_group(dim=2, tags=[plane_surface])
     gmsh.model.set_physical_name(dim=2, tag=outer_domain, name='Outer')
 
+    # physical groups for boundaries, supplied tags are tags of the lines and arcs that define the boundary
+    model.synchronize()
+    inner_loop_physical = gmsh.model.add_physical_group(dim=1, tags=inner_most_arcs)
+    gmsh.model.set_physical_name(dim=1, tag=inner_loop_physical, name='Inner boundary')
+    model.synchronize()
+    outer_loop_physical = gmsh.model.add_physical_group(dim=1, tags=lines_outer)
+    gmsh.model.set_physical_name(dim=1, tag=outer_loop_physical, name='Outer boundary')
+
     model.synchronize()
     model.removeAllDuplicates()
 
     gmsh.model.mesh.generate(dim=2)
     gmsh.model.mesh.removeDuplicateNodes()
+
     if filename is not None:
         gmsh.write(filename)
     else:
@@ -168,16 +184,25 @@ def create_mesh(rays_list, ellipses_list, corner_points, resolution_outer=10, re
         if not path.exists():
             path.mkdir()
         gmsh.write('mesh_output/test_out.msh')
-    # gmsh.finalize()
-    return gmsh.model
+
+    print(f'Inner bd tag: {inner_loop_physical}, outer bd tag: {outer_loop_physical}')
+
+    if return_model:
+        return gmsh.model
+    else:
+        gmsh.finalize()
 
 
 def create_xdmf_mesh_from_msh_file(filename):
     """
     Function converts triangle mesh from msh to fenicx prefered xdmf. Assumes that the mesh is 2D
     and prunes the extra z-coordinate.
-    Assumes that the mesh has no physical groups! TODO: fix this
+    Assumes that the mesh has no physical groups! TODO: fix this and unite with the other mesh saving function.
     """
+    # based on
+    # https://jsdokken.com/dolfinx-tutorial/chapter3/subdomains.html#read-in-msh-files-with-dolfinx
+    # and
+    # https://github.com/jorgensd/dolfinx-tutorial/blob/v0.8.0/chapter3/subdomains.ipynb
     mesh_from_file = meshio.read(f"{filename}.msh")
     cells = mesh_from_file.get_cells_type("triangle")
     points = mesh_from_file.points[:, :2]  # removes the z-coordinate
@@ -189,14 +214,21 @@ def create_xdmf_mesh_from_msh_file(filename):
 def create_xdmf_mesh_from_msh_with_cell_data(filename):
     # based on
     # https://jsdokken.com/dolfinx-tutorial/chapter3/subdomains.html#read-in-msh-files-with-dolfinx
+    # and
+    # https://github.com/jorgensd/dolfinx-tutorial/blob/v0.8.0/chapter3/subdomains.ipynb
+    
     mesh_in = meshio.read(f"{filename}.msh")
-    cell_data = mesh_in.get_cell_data("gmsh:physical", "triangle")
+    
+    cell_types = ["triangle", "line"]
+    filename_suffixes = {"triangle": '', "line": "boundary"}
     points = mesh_in.points[:, :2]  # cut the z-coordinates for 2d mesh TODO: use as parameter
-    cells = mesh_in.get_cells_type("triangle")
-    out_mesh = meshio.Mesh(points=points, cells={"triangle": cells},
-                           cell_data={"Domains": [cell_data]})
-    meshio.write(f"{filename}.xdmf", out_mesh)
-    print(f"Mesh written to files: {filename}.xdmf, {filename}.h5")
+    for cell_type in cell_types:
+        cell_data = mesh_in.get_cell_data("gmsh:physical", cell_type)
+        cells = mesh_in.get_cells_type(cell_type)
+        out_mesh = meshio.Mesh(points=points, cells={cell_type: cells}, cell_data={"Domains": [cell_data]})
+        name = f"{filename}_{filename_suffixes[cell_type]}" if filename_suffixes[cell_type] else f"{filename}"
+        meshio.write(f"{name}.xdmf", out_mesh)
+        print(f"Mesh written to files: {name}.xdmf, {name}.h5")
 
 
 def generate_tsx_mesh_with_regions(filename='tsx_ellipses_regions'):
@@ -207,8 +239,11 @@ def generate_tsx_mesh_with_regions(filename='tsx_ellipses_regions'):
     magical_constant = 0.001
     no_of_rays = 5
     corners = [(50, -50, 0), (50, 50, 0), (-50, 50, 0), (-50, -50, 0)]
+
+    # TODO: Should these two be the actual input?
     rays_list = [Ray(2.0*pi*n/no_of_rays + magical_constant) for n in range(no_of_rays)]
     ellipses_list = [Ellipse(x_axis*k, y_axis*k) for k in (1, 1.3, 1.7, 2)]
+
     _ = create_mesh(rays_list, ellipses_list, corners, filename=f'{filename}.msh')
     create_xdmf_mesh_from_msh_with_cell_data(filename)
 
