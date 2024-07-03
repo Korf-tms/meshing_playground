@@ -231,19 +231,20 @@ def create_xdmf_mesh_from_msh_with_cell_data(filename):
         print(f"Mesh written to files: {name}.xdmf, {name}.h5")
 
 
-def generate_tsx_mesh_with_regions(filename='tsx_ellipses_regions'):
+def generate_tsx_mesh_with_regions(filename='tsx_ellipses_regions', no_of_rays=5, ellipses_list=None):
     # TODO: think through what are suitable inputs
-    x_axis = 4.375 / 2
-    y_axis = 3.5 / 2
+    if not ellipses_list:
+        x_axis = 4.375 / 2
+        y_axis = 3.5 / 2
+        ellipses_list = [Ellipse(x_axis * k, y_axis * k) for k in (1, 1.3, 1.7, 2)]
 
+    # hack-ish shift in angle to avoid bad ellipses
     magical_constant = 0.001
-    no_of_rays = 5
+
     corners = [(50, -50, 0), (50, 50, 0), (-50, 50, 0), (-50, -50, 0)]
+    rays_list = [Ray(2.0*pi*n/no_of_rays + magical_constant) for n in range(no_of_rays)]
 
     # TODO: Should these two be the actual input?
-    rays_list = [Ray(2.0*pi*n/no_of_rays + magical_constant) for n in range(no_of_rays)]
-    ellipses_list = [Ellipse(x_axis*k, y_axis*k) for k in (1, 1.3, 1.7, 2)]
-
     _ = create_mesh(rays_list, ellipses_list, corners, filename=f'{filename}.msh')
     create_xdmf_mesh_from_msh_with_cell_data(filename)
 
