@@ -239,7 +239,7 @@ def tsx_setup_and_computation(mesh_name,
         dfx.fem.petsc.apply_lifting(b, [a], [bcs])  # ???
         b.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
         dfx.fem.set_bc(b, bcs)
-        solver.solve(b, x_h.vector)  # TODO: deal with the deprecation
+        solver.solve(b, x_h.x.petsc_vec)  # .x.petsc_vec instead of .vector
         x_h.x.scatter_forward()
         u_h, p_h = x_h.split()
         if PICTURE_DATA:
@@ -252,6 +252,9 @@ if __name__ == '__main__':
     import matplotlib.pyplot as plt
 
     provide_tsx_mesh('../out/my_tunnel')
+    # hardcoded number of domains, 'constant' depending on the used mesh
+    number_of_subdomains = 16  # TODO: could be taken from the mesh
+
     young_e = 6e10
     poisson_nu = 0.2
     mu = young_e / (2 * (1 + poisson_nu))
@@ -260,11 +263,11 @@ if __name__ == '__main__':
     cpp = 7.712e-12
     timestep = SEC_IN_DAY / 2
 
-    lmbda_values = [lmbda for _ in range(16)]
-    mu_values = [mu for _ in range(16)]
-    alpha_values = [alpha for _ in range(16)]
-    cpp_values = [cpp for _ in range(16)]
-    k_values = [6.0e-19 for _ in range(16)]
+    lmbda_values = [lmbda + _ for _ in range(number_of_subdomains)]
+    mu_values = [mu + _ for _ in range(number_of_subdomains)]
+    alpha_values = [alpha - 0.00001*_ for _ in range(number_of_subdomains)]
+    cpp_values = [cpp + _*1.0e-14 for _ in range(number_of_subdomains)]
+    k_values = [6.0e-19 + _*1.0e-20 for _ in range(number_of_subdomains)]
 
     data = tsx_setup_and_computation('../out/my_tunnel',
                                      lmbda_values, mu_values, alpha_values, cpp_values, k_values,
