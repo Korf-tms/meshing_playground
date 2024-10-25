@@ -1,31 +1,35 @@
-from ellipses_regions_generator import generate_tsx_mesh_with_regions, Ellipse
 import os
+from math import sin, cos
+
+import numpy as np
+import pyvista
 
 import ufl
-import numpy as np
-
-from mpi4py import MPI
-from petsc4py import PETSc
-
-import dolfinx.fem.petsc  # needed to carry out the init :(
-import dolfinx as dfx
-from dolfinx.fem import Constant
 from ufl import grad, inner, div, dx
 from basix.ufl import element, mixed_element
 
-from math import sin, cos
+from dolfinx.io import VTKFile
+from mpi4py import MPI
+from petsc4py import PETSc
 
+import dolfinx as dfx
+import dolfinx.fem.petsc  # needed to carry out the init :(
+from dolfinx.fem import Constant
+from dolfinx import plot
+
+from ellipses_regions_generator import generate_tsx_mesh_with_regions, Ellipse
+
+
+# hardcoded values for boundary conditions
 TUNNEL_X_HALF_AXIS = 4.375 / 2
 TUNNEL_Y_HALF_AXIS = 3.5 / 2
-SEC_IN_DAY = 24*60*60
-
-PICTURE_DATA = True
 
 
 def provide_tsx_mesh(path_to_mesh):
     """
     Check if there is a file on path_to_mesh. If there is not create a tsx mesh.
     """
+    # TODO: better input and checking if dirs exists, creating them if needed
     suffixes = ['.xdmf', '.h5', '_boundary.xdmf', '_boundary.h5']
     if all([os.path.isfile(f'{path_to_mesh}{suffix}') for suffix in suffixes]):
         return None
