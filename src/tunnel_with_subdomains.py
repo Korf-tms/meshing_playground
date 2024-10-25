@@ -72,7 +72,8 @@ def prepare_coefficient_functions(mesh, cells_tags,
     list_of_lists = [lmbda_list, mu_list, alpha_list, cpp_list, k_list]
     list_of_functions = [lmbda, mu, alpha, cpp, k]
 
-    marker_start = 1  # effectively min(set(cell_tags.values)), most of the time, depends on gmsh code
+    # effectively min(set(cell_tags.values)), most of the time, depends on gmsh code
+    marker_start = 1
 
     # create dict to store map of domains to actual cells
     tag_to_cells = {marker: cells_tags.find(marker) for marker in set(cells_tags.values)}
@@ -153,15 +154,11 @@ def epsilon(u):
     return ufl.sym(ufl.nabla_grad(u))
 
 
-def tsx_setup_and_computation(mesh_name,
-                              lmbda_list, mu_list, alpha_list, cpp_list, k_list,
+def tsx_setup_and_computation(mesh,
+                              lmbda, mu, alpha, cpp, k,
                               tau_f, t_steps_num,
                               sigma_xx=-45e6, sigma_yy=-11e6, sigma_angle=0):
-    # load mesh and domains data
-    mesh, cell_tags, facet_tags = load_mesh_and_domain_tags(mesh_name)
-    lmbda, mu, alpha, cpp, k = prepare_coefficient_functions(mesh, cell_tags,
-                                                             lmbda_list, mu_list, alpha_list, cpp_list, k_list)
-
+    # time step parameter
     tau = Constant(mesh, tau_f)
 
     # Spaces and functions
@@ -224,8 +221,8 @@ def tsx_setup_and_computation(mesh_name,
 
     # time stepping
     current_time = 0.0
-    if PICTURE_DATA:
-        pressure_values = [p_h.eval(ready_eval_points, eval_cells)]
+
+    pressure_values = [p_h.eval(ready_eval_points, eval_cells)]
     for _ in range(1, t_steps_num):
         print(_)
         current_time += tau_f
@@ -242,18 +239,61 @@ def tsx_setup_and_computation(mesh_name,
         solver.solve(b, x_h.x.petsc_vec)  # .x.petsc_vec instead of .vector
         x_h.x.scatter_forward()
         u_h, p_h = x_h.split()
-        if PICTURE_DATA:
-            pressure_values.append(p_h.eval(ready_eval_points, eval_cells))
+        pressure_values.append(p_h.eval(ready_eval_points, eval_cells))
 
     return pressure_values
+
+
+def plot_pressures(data):
+    data_fp = np.zeros((4, len(data)))
+    for i, _ in enumerate(data):
+        data_fp[:, i] = [value[0] for value in data[i]]
+
+    names = ['HGT 1-5', 'HGT 1-4', 'HGT 2-5', 'HGT 2-4']
+    colors = ['red', 'green', 'blue', 'violet']
+    for i, timeline in enumerate(data_fp):
+        plt.plot(timeline, label=names[i], color=colors[i])
+
+    # NOTE: hardcoded for 400 days
+    plt.xticks(range(0, 801, 100), range(0, 401, 50))
+    plt.legend()
+    plt.ylabel('Pressure [Pa]')
+    plt.xlabel('Days')
+    plt.title('Pressure in control points')
+    plt.show()
+
+def pyvista_plot(dolfinx_function):
+    mesh = dolfinx_function.function_space.mesh
+    topology, cell_types, geometry = plot.vtk_mesh(mesh, 2)
+    grid = pyvista.UnstructuredGrid(topology, cell_types, geometry)
+    grid.cell_data["my_function"] = dolfinx_function.x.array.real
+    plotter = pyvista.Plotter()
+    plotter.title = 'Coefficients'
+    plotter.add_mesh(grid, show_edges=True, scalar_bar_args={'vertical': True})
+    plotter.view_xy()
+    plotter.show()
+
+def write_func_to_vtk(func, filnename):
+    mesh = func.function_space.mesh
+    with VTKFile(mesh.comm, filnename, 'w') as f:
+        f.write_mesh(mesh)
+        f.write_function(func)
+
 
 
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
 
-    provide_tsx_mesh('../out/my_tunnel')
-    # hardcoded number of domains, 'constant' depending on the used mesh
-    number_of_subdomains = 16  # TODO: could be taken from the mesh
+    SEC_IN_DAY = 24 * 60 * 60
+    plot_the_data = False
+    visualize_parameters = False
+    vtk_output = False
+
+    mesh_name = 'my_tunnel'
+    mesh_dir = '../mesh_outputs'
+    os.makedirs(mesh_dir, exist_ok=True)
+    mesh_prefix = f'{mesh_dir}/{mesh_name}'  # TODO: nicer logic and names
+    provide_tsx_mesh(mesh_prefix)
 
     young_e = 6e10
     poisson_nu = 0.2
@@ -263,29 +303,33 @@ if __name__ == '__main__':
     cpp = 7.712e-12
     timestep = SEC_IN_DAY / 2
 
+    tsx_mesh, cell_tags, _ = load_mesh_and_domain_tags(mesh_prefix)
+
+    # NOTE: following assumes that domains are label consecutively from 1, gmsh does this for now
+    number_of_subdomains = max(set(cell_tags.values))
+
+    # example data to test functionality
     lmbda_values = [lmbda + _ for _ in range(number_of_subdomains)]
     mu_values = [mu + _ for _ in range(number_of_subdomains)]
     alpha_values = [alpha - 0.00001*_ for _ in range(number_of_subdomains)]
     cpp_values = [cpp + _*1.0e-14 for _ in range(number_of_subdomains)]
     k_values = [6.0e-19 + _*1.0e-20 for _ in range(number_of_subdomains)]
 
-    data = tsx_setup_and_computation('../out/my_tunnel',
-                                     lmbda_values, mu_values, alpha_values, cpp_values, k_values,
-                                     tau_f=SEC_IN_DAY/2, t_steps_num=800)
+    # converts lists to dolfinx functions on respective subdomains
+    lmbda_func, mu_func, alpha_func, cpp_func, k_func = prepare_coefficient_functions(tsx_mesh, cell_tags,
+                                                             lmbda_values, mu_values, alpha_values, cpp_values, k_values)
 
-    if PICTURE_DATA:
-        data_fp = np.zeros((4, len(data)))
-        for i, item in enumerate(data):
-            data_fp[:, i] = [value[0] for value in data[i]]
+    # the actual computation
+    pressure_data = tsx_setup_and_computation(tsx_mesh,
+                                     lmbda_func, mu_func, alpha_func, cpp_func, k_func,
+                                     tau_f=SEC_IN_DAY/2, t_steps_num=100)
 
-        names = ['HGT 1-5', 'HGT 1-4', 'HGT 2-5', 'HGT 2-4']
-        colors = ['red', 'green', 'blue', 'violet']
-        for i, timeline in enumerate(data_fp):
-            plt.plot(timeline, label=names[i], color=colors[i])
+    if plot_the_data:
+        plot_pressures(pressure_data)
 
-        plt.xticks(range(0, 801, 100), range(0, 401, 50))
-        plt.legend()
-        plt.ylabel('Pressure [Pa]')
-        plt.xlabel('Days')
-        plt.title(f'Pressure in control points')
-        plt.show()
+    if visualize_parameters:
+        pyvista_plot(k_func)
+
+    if vtk_output:
+        func_name = 'k'
+        write_func_to_vtk(k_func, f'{mesh_dir}/{func_name}.vtk')
