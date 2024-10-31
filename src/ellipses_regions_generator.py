@@ -86,7 +86,7 @@ def compute_region_data(ellipses_list, rays_list):
     return borders
 
 
-def create_mesh(rays_list, ellipses_list, corner_points, resolution_outer=10, resolution_inner=0.1, filename=None,
+def create_mesh(rays_list, ellipses_list, corner_points, resolution_outer, resolution_inner, filename=None,
                 return_model=False):
     """
     Creates square mesh with subdomains determined by rays and ellipses
@@ -231,7 +231,8 @@ def create_xdmf_mesh_from_msh_with_cell_data(filename):
         print(f"Mesh written to files: {name}.xdmf, {name}.h5")
 
 
-def generate_tsx_mesh_with_regions(filename='tsx_ellipses_regions', no_of_rays=5, ellipses_list=None):
+def generate_tsx_mesh_with_regions(filename='tsx_ellipses_regions', no_of_rays=5, ellipses_list=None,
+                                   resolution_outer=10, resolution_inner=0.1):
     # TODO: think through what are suitable inputs
     if not ellipses_list:
         x_axis = 4.375 / 2
@@ -245,7 +246,8 @@ def generate_tsx_mesh_with_regions(filename='tsx_ellipses_regions', no_of_rays=5
     rays_list = [Ray(2.0*pi*n/no_of_rays + magical_constant) for n in range(no_of_rays)]
 
     # TODO: Should these two be the actual input?
-    _ = create_mesh(rays_list, ellipses_list, corners, filename=f'{filename}.msh')
+    _ = create_mesh(rays_list, ellipses_list, corners, filename=f'{filename}.msh',
+                    resolution_outer=resolution_outer, resolution_inner=resolution_inner)
     create_xdmf_mesh_from_msh_with_cell_data(filename)
 
 
