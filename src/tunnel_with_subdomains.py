@@ -23,6 +23,7 @@ from ellipses_regions_generator import generate_tsx_mesh_with_regions, Ellipse
 # hardcoded values for boundary conditions
 TUNNEL_X_HALF_AXIS = 4.375 / 2
 TUNNEL_Y_HALF_AXIS = 3.5 / 2
+SEC_IN_DAY = 24 * 60 * 60
 
 
 def provide_tsx_mesh(path_to_mesh):
@@ -266,7 +267,7 @@ def plot_pressures(data):
     plt.title('Pressure in control points')
     plt.show()
 
-def pyvista_plot(dolfinx_function):
+def pyvista_parameter_plot(dolfinx_function):
     mesh = dolfinx_function.function_space.mesh
     topology, cell_types, geometry = plot.vtk_mesh(mesh, 2)
     grid = pyvista.UnstructuredGrid(topology, cell_types, geometry)
@@ -280,17 +281,44 @@ def pyvista_plot(dolfinx_function):
 def write_func_to_vtk(func, filnename):
     mesh = func.function_space.mesh
     with VTKFile(mesh.comm, filnename, 'w') as f:
-        f.write_mesh(mesh)
+        f.write_mesh(mesh)  # mesh should be written only once, afaik
         f.write_function(func)
 
+
+def matplotlib_parameter_plot(mesh, cell_tags, params_list):
+    '''
+    Provides matplotlib plotting functionality. Uses the same logic as prepare_coefficient_functions
+    to create the array of material values and plots the array using plt.tripcolor.
+    '''
+    node_x = mesh.geometry.x[:, 0]
+    node_y = mesh.geometry.x[:, 1]
+    elem_to_node_adjacency = mesh.topology.connectivity(2, 0).array  # triangle to point adjacency matrix as 1d array
+    elem = elem_to_node_adjacency.reshape(elem_to_node_adjacency.shape[0]//3, 3)
+    material = np.zeros(elem.shape[0])
+
+    tag_to_cells = {marker: cell_tags.find(marker) for marker in set(cell_tags.values)}
+
+    # effectively min(set(cell_tags.values)), most of the time, depends on gmsh code
+    marker_start = 1
+
+    for marker, value in enumerate(params_list, start=marker_start):
+        cell_numbers = tag_to_cells[marker]
+        material[cell_numbers] = value
+
+    my_plot = plt.tripcolor(node_x, node_y, elem, facecolors=material, edgecolors='k', cmap='cool')
+    plt.colorbar(my_plot)
+    plt.xlim([-5, 5])
+    plt.ylim([-4, 4])
+    plt.title('Best fit')
+    plt.show()
 
 
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
 
-    SEC_IN_DAY = 24 * 60 * 60
-    plot_the_data = False
-    visualize_parameters = False
+    plot_the_data = True
+    visualize_parameters_pyvista = False
+    visualize_parameters_matplotlib = False
     vtk_output = False
 
     mesh_name = 'my_tunnel'
@@ -326,13 +354,16 @@ if __name__ == '__main__':
     # the actual computation
     pressure_data = tsx_setup_and_computation(tsx_mesh,
                                      lmbda_func, mu_func, alpha_func, cpp_func, k_func,
-                                     tau_f=SEC_IN_DAY/2, t_steps_num=100)
+                                     tau_f=SEC_IN_DAY/2, t_steps_num=800)
 
     if plot_the_data:
         plot_pressures(pressure_data)
 
-    if visualize_parameters:
-        pyvista_plot(k_func)
+    if visualize_parameters_pyvista:
+        pyvista_parameter_plot(k_func)
+
+    if visualize_parameters_matplotlib:
+        matplotlib_parameter_plot(tsx_mesh, cell_tags, k_values)
 
     if vtk_output:
         func_name = 'k'
