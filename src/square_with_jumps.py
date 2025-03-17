@@ -5,11 +5,13 @@ import ufl
 from mpi4py import MPI
 from petsc4py import PETSc
 
-from ufl import grad, div, inner, dx
+from ufl import grad, div, inner, dx, ds
+from dolfinx import plot
 from dolfinx.fem import Constant
 from basix.ufl import element, mixed_element
 from dolfinx.fem.petsc import LinearProblem
 
+import pyvista
 
 # TODO: move to separate file
 def load_mesh_and_domain_tags(path_to_mesh):
@@ -26,7 +28,7 @@ def load_mesh_and_domain_tags(path_to_mesh):
 
     with dfx.io.XDMFFile(MPI.COMM_WORLD, f'{path_to_mesh}_boundary.xdmf', 'r') as boundary_file:
         facet_tags = boundary_file.read_meshtags(mesh, name='Grid')
-
+    print("Unique facet tags:", np.unique(facet_tags.values))
     return mesh, cell_tags, facet_tags
 
 # TODO: move to separate file
@@ -80,7 +82,6 @@ def setup_and_compute(mesh, facet_tags,
     # boundary conditions, hardcoded for this version, TODO: move to function, make into input
     top_facets_inner = facet_tags.find(101)
     top_facets_outer = facet_tags.find(102)
-    top_facets = np.concatenate((top_facets_inner, top_facets_outer))
     left_facets = facet_tags.find(103)
     right_facets = facet_tags.find(104)
     bottom_facets = facet_tags.find(105)
@@ -119,10 +120,16 @@ def setup_and_compute(mesh, facet_tags,
     pbnb = a_elastic + \
            tau * (1.0/ k) * inner(v, z) * dx + tau ** 2 / divdiv_term * div(v) * div(z) * dx + \
            divdiv_term * p * q * dx
+    p_naive = a_elastic + alpha**2/cpp*div(u)*div(w)*dx + tau * (1.0/ k) * inner(v, z) * dx + \
+            tau**2/cpp * div(v) * div(z) * dx + cpp*p*q*dx
+    p_naive = dfx.fem.form(p_naive)
+    pbnb = dfx.fem.form(pbnb)
 
     # rhs including contribution from boundary conditions
-    ds_top_inner = ufl.Measure("ds", domain=mesh, subdomain_data=top_facets_inner)
-    ds_top = ufl.Measure("ds", domain=mesh, subdomain_data=top_facets)
+    facets = np.hstack([top_facets_inner, top_facets_outer])
+    markers = np.hstack([np.full(len(top_facets_inner), 1), np.full(len(top_facets_outer), 2)])
+    subdomain_data = dfx.mesh.meshtags(mesh, 1, facets, markers)
+    ds = ufl.Measure("ds", domain=mesh, subdomain_data=subdomain_data)
 
     f = Constant(mesh, np.array([0.0, 0.0]))
     g = Constant(mesh, np.array([0.0, 0.0]))
@@ -130,15 +137,18 @@ def setup_and_compute(mesh, facet_tags,
 
     n = ufl.FacetNormal(mesh)
 
-    p_flux = 3e6
-    p_stress = 4e6
-    rhs = inner(f, w)*dx + inner(g, z)*dx + h*q*dx
-    # rhs += p_stress*tau*inner(n, w)*ds_top_inner(0)
-    # rhs += p_flux*inner(n, z)*ds_top(0)
+    p_flux = 1e3
+    p_stress = 2e3
+    rhs = inner(f, w)*dx + inner(g, z)*dx + h*q*dx  # volume forces
+    rhs += -tau*p_stress*inner(n, w)*ds(1) # + tau*p_stress*inner(n, w)*ds(2)
+    rhs += -p_flux*inner(n, z)*ds(1) #+ p_flux*inner(n, z)*ds(2)
     rhs_form = dfx.fem.form(rhs)
 
     A = dfx.fem.petsc.assemble_matrix(a, bcs=dirichlet_bcs)
     A.assemble()
+
+    P = dfx.fem.petsc.assemble_matrix(p_naive, bcs=dirichlet_bcs)
+    P.assemble()
 
     solver = PETSc.KSP().create(mesh.comm)
     solver.setOperators(A, A)
@@ -146,7 +156,9 @@ def setup_and_compute(mesh, facet_tags,
     solver.getPC().setType('lu')
     opts = PETSc.Options()
     opts['pc_factor_mat_solver_type'] = 'mumps'
-    opts['ksp_converged_reason'] = True
+    # opts['ksp_norm_type'] = 'unpreconditioned'
+    opts['ksp_monitor_true_residual'] = None
+    opts['ksp_converged_reason'] = None
     solver.setFromOptions()
 
     current_time = 0.0
@@ -160,6 +172,47 @@ def setup_and_compute(mesh, facet_tags,
         b.ghostUpdate(addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE)
         dfx.fem.set_bc(b, dirichlet_bcs)
         solver.solve(b, x_h.x.petsc_vec)
+        u_h, v_h, p_h = x_h.split()
+
+        P1_space = dfx.fem.functionspace(mesh, element("CG", mesh.basix_cell(), 1))
+        p_h_plot = dfx.fem.Function(P1_space)
+        p_h_plot.interpolate(p_h)
+        P1_vector_space = dfx.fem.functionspace(mesh, element("CG", mesh.basix_cell(), 1,
+                                                             shape=(mesh.geometry.dim,)))
+        u_h_plot = dfx.fem.Function(P1_vector_space)
+        u_h_plot.interpolate(u_h)
+
+        grid_uh = pyvista.UnstructuredGrid(*plot.vtk_mesh(P1_space))
+        grid_uh.point_data["p"] = p_h_plot.x.array.real
+        grid_uh.set_active_scalars("p")
+        p2 = pyvista.Plotter()
+        p2.title = 'Solution'
+        p2.add_mesh(grid_uh, show_edges=True, scalar_bar_args={'vertical': True})
+        p2.view_xy()
+        p2.show_axes()
+        p2.show_bounds()
+        p2.show()
+        p2 = pyvista.Plotter()
+        velocity = u_h_plot.x.array.reshape((-1, 2))
+        velocity_3d = np.column_stack((velocity, np.zeros(velocity.shape[0])))
+
+        grid_uh.point_data["u"] = velocity_3d
+        glyphs = grid_uh.glyph(orient="u", scale="u", factor=100)
+        p2.title = 'u'
+        p2.add_mesh(grid_uh, show_edges=True, scalar_bar_args={'vertical': True})
+        p2.add_mesh(glyphs, color='b')
+        p2.view_xy()
+        p2.show_axes()
+        p2.show_bounds()
+        p2.show()
+
+        # warped = grid_uh.warp_by_scalar()
+        # p3 = pyvista.Plotter()
+        # p3.title = 'Solution in 3d'
+        # p3.add_mesh(warped, show_edges=True, show_scalar_bar=True, scalar_bar_args={'vertical': True})
+        # p3.show_axes()
+        # p3.show()
+
 
 
 
@@ -181,7 +234,7 @@ if __name__ == '__main__':
     mu_values = [mu] * number_of_subdomains
     alpha_values = [alpha] * number_of_subdomains
     cpp_values = [cpp] * number_of_subdomains
-    k_values = [6.0e-19 + _*1.0e-20 for _ in range(number_of_subdomains)]  # TODO: lognormal
+    k_values = [6.0e-19  for _ in range(number_of_subdomains)]  # TODO: lognormal
     kmin = min(k_values)
 
     lmbda, mu, alpha, cpp, k = prepare_coefficient_functions(square_mesh, cell_tags,
