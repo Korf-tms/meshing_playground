@@ -3,7 +3,7 @@ import numpy as np
 
 
 def create_mesh(file_name='slope_with_waterlevels',
-                z_water_height=45, z_solid_water_level=80,
+                z_water_height=35, z_solid_water_level=50,
                 h=3,
                 order=2):
     def box_from_coordinates(coordinates):
