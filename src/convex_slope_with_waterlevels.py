@@ -175,17 +175,18 @@ def create_mesh(file_name='slope_with_waterlevels',
     # deal with the cut at x = 0
     all_faces = gmsh.model.getEntities(dim=2)
     max_z_center = -1
-    x_faces = []
+    x0_faces = []
     # we must pick the correct face to cut depending on z_solid_water_level!
     # currently provided by naked eye that the cut is in the topmost face
     for dim, tag in all_faces:
         center_coo = factory.get_center_of_mass(dim, tag)
         if abs(center_coo[0]) < 1e-6:  # face is at the x=0 plane
-            x_faces.append(tag)
+            x0_faces.append(tag)
             if max_z_center < center_coo[2]:
                 max_z_center = center_coo[2]
                 top_face = tag
-    x_faces.remove(top_face)
+    x0_faces.remove(top_face)
+    # print(f"x0_faces: {x0_faces}, top_face: {top_face}")
 
     # create another auxiliray plane, shameless copy&paste
     z_water_height = z_solid_water_level
@@ -214,18 +215,49 @@ def create_mesh(file_name='slope_with_waterlevels',
     # remove the auxiliary plane
     factory.remove([(2, cutting_plane_surface)], recursive=True)
     factory.synchronize()
+    # update lower wet faces
+    x0_faces.append(lower_x0)
 
-    x_faces.append(lower_x0)
+    # mark the rest of the boundary faces
+    all_faces = gmsh.model.getEntities(dim=2)
+    names = ('x_max', 'y0', 'ymax', 'z0', 'zmax', 'zwater_bed')
+    positions = {
+        'x_max': (0, x_sum),
+        'y0': (1, 0),
+        'ymax': (1, y_sum),
+        'z0': (2, 0),
+        'zmax': (2, z_sum),
+        'zwater_bed': (2, z_layer0+z_layer1)
+    }
+
+    face_groups = {}
+    for dim, tag in all_faces:
+        center_coo = factory.get_center_of_mass(dim, tag)
+        for name, (axis, value) in positions.items():
+            if np.isclose(center_coo[axis], value):
+                if name not in face_groups:
+                    face_groups[name] = []
+                # special case for the water bed, we want only the outer face
+                if name == 'zwater_bed' and center_coo[0] < x_sum - x_down - x_cover:
+                    continue
+                face_groups[name].append(tag)
+    print(face_groups)
+    name2tag = {'bottom_layer': 1, 'middle_layer': 2, 'top_layer': 3, 'cover': 4,
+                'dry_slope': 5, 'wet_slope': 6,
+                'dry_solid': 7, 'wet_solid': 8,
+                'x_max': 9, 'y0': 10, 'ymax': 11, 'z0': 12, 'zmax': 13, 'zwater_bed': 14}
 
     # Assign physical groups
-    gmsh.model.addPhysicalGroup(3, [bottom_layer], name="bottom_layer")
-    gmsh.model.addPhysicalGroup(3, [middle_layer], name="middle_layer")
-    gmsh.model.addPhysicalGroup(3, [top_layer_final], name="top_layer")
-    gmsh.model.addPhysicalGroup(3, [new_cover_left_tag, new_cover_right_tag], name="cover")
-    gmsh.model.addPhysicalGroup(2, [upper_l, upper_r], name='dry_slope')
-    gmsh.model.addPhysicalGroup(2, [lower_l, lower_r], name='wet_slope')
-    gmsh.model.addPhysicalGroup(2, [upper_x0], name='dry_solid')
-    gmsh.model.addPhysicalGroup(2, x_faces, name='wet_solid')
+    gmsh.model.addPhysicalGroup(3, [bottom_layer], name="bottom_layer", tag=name2tag['bottom_layer'])
+    gmsh.model.addPhysicalGroup(3, [middle_layer], name="middle_layer", tag=name2tag['middle_layer'])
+    gmsh.model.addPhysicalGroup(3, [top_layer_final], name="top_layer", tag=name2tag['top_layer'])
+    gmsh.model.addPhysicalGroup(3, [new_cover_left_tag, new_cover_right_tag], name="cover", tag=name2tag['cover'])
+    gmsh.model.addPhysicalGroup(2, [upper_l, upper_r], name='dry_slope', tag=name2tag['dry_slope'])
+    gmsh.model.addPhysicalGroup(2, [lower_l, lower_r], name='wet_slope', tag=name2tag['wet_slope'])
+    gmsh.model.addPhysicalGroup(2, [upper_x0], name='dry_solid', tag=name2tag['dry_solid'])
+    gmsh.model.addPhysicalGroup(2, x0_faces, name='wet_solid', tag=name2tag['wet_solid'])
+    for name, tags in face_groups.items():
+        gmsh.model.addPhysicalGroup(2, tags, name=name, tag=name2tag[name])
 
     factory.synchronize()
 
@@ -237,6 +269,7 @@ def create_mesh(file_name='slope_with_waterlevels',
     gmsh.fltk.run()
     gmsh.finalize()
 
+    return name2tag
 
 def transform_to_hdf5(input_file='slope_final.msh'):
     pass
