@@ -278,12 +278,19 @@ def transform_to_hdf5(input_file='slope_with_waterlevels.msh', order=2):
     import meshio
     import h5py
     from math import comb
+
+    # exploiting gmsh naming convention
     triangle_num = '' if order==1 else comb(order+2, 2)
     tetra_num = '' if order==1 else comb(order+3, 3)
+
     mesh = meshio.read(input_file)
     points = mesh.points
+
+    # element order for P2 tetras: A, B, C, D, AB, BC, CA, AD, DB, DC
     tetra_cells = mesh.get_cells_type(f"tetra{tetra_num}")
+    # element order for P2 triangles: A, B, C, AB, BC, CA
     triangles = mesh.get_cells_type(f"triangle{triangle_num}")
+
     tetra_labels = mesh.get_cell_data("gmsh:physical", f"tetra{tetra_num}")
     triangle_labels = mesh.get_cell_data("gmsh:physical", f"triangle{triangle_num}")
 
