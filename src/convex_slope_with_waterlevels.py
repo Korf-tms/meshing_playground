@@ -205,7 +205,7 @@ def create_mesh(file_name='slope_with_waterlevels',
         center_coo = factory.getCenterOfMass(*item)
         if np.isclose(center_coo[2], z_water_height):
             pass
-        elif center_coo[2] > z_water_height:
+        elif center_coo[2] < z_water_height:
             upper_x0 = item[1]
         else:
             lower_x0 = item[1]
