@@ -44,6 +44,33 @@ def create_mesh(file_name='slope_with_waterlevels',
                 if is_sloped_in_x and is_sloped_in_y and is_sloped_in_z:  # there is only one suitable face
                     return tag
         return -1 # Return -1 if not found, should actually raise some error here
+    
+    def intersect_with_z_level_plane(z_level, face_to_cut_id):
+        eps = 10  # safe distance from the slope object mass
+        p1 = factory.add_point(0-eps, 0-eps, z_level); p2 = factory.add_point(x_sum+eps, 0-eps, z_level)
+        p3 = factory.add_point(x_sum+eps, y_sum+eps, z_level); p4 = factory.add_point(0-eps, y_sum+eps, z_level)
+        cutting_plane_loop = factory.add_curve_loop([factory.add_line(p1,p2), factory.add_line(p2,p3), factory.add_line(p3,p4), factory.add_line(p4,p1)])
+        cutting_plane_surface = factory.add_plane_surface([cutting_plane_loop])
+
+        # Use fragment to split the faces
+        out_tags_split, _ = factory.fragment(
+            [(2, face_to_cut_id)], # Objects to split
+            [(2, cutting_plane_surface)],  # Tool
+        )
+        # The output will contain the new upper and lower face parts, and the new intersection object.
+        upper, lower = -1, -1
+        for dimTag in out_tags_split:
+            center_coo = factory.getCenterOfMass(*dimTag)
+            if np.isclose(center_coo[2], z_level):  # intersection in the plane, we do not want that
+                pass
+            elif center_coo[2] > z_level:
+                upper = dimTag[1]
+            else:
+                lower = dimTag[1]
+        
+        factory.remove([(2, cutting_plane_surface)], recursive=True)
+        factory.synchronize()  # is this actually needed here?
+        return upper, lower  # should probably raise some error if any is -1
 
     gmsh.initialize()
     factory = gmsh.model.occ
@@ -128,53 +155,13 @@ def create_mesh(file_name='slope_with_waterlevels',
     if slope_face_left_tag == -1 or slope_face_right_tag == -1:  # should raise some errors here
         print('ERROR: Failed to find the outer slope surfaces on the healed model.')
 
-    # --- Intersect the faces with a plane ---
-    eps = 10
-    p1 = factory.add_point(0-eps, 0-eps, z_water_height); p2 = factory.add_point(x_sum+eps, 0-eps, z_water_height)
-    p3 = factory.add_point(x_sum+eps, y_sum+eps, z_water_height); p4 = factory.add_point(0-eps, y_sum+eps, z_water_height)
-    cutting_plane_loop = factory.add_curve_loop([factory.add_line(p1,p2), factory.add_line(p2,p3), factory.add_line(p3,p4), factory.add_line(p4,p1)])
-    cutting_plane_surface = factory.add_plane_surface([cutting_plane_loop])
-
-    # Use fragment to split the faces
-    out_tags_split, _ = factory.fragment(
-        [(2, slope_face_left_tag)], # Objects to split
-        [(2, cutting_plane_surface)],  # Tool
-    )
-    # The output will contain the new upper and lower face parts, and the new intersection object.
-    upper_l, lower_l = -1, -1
-    for dimTag in out_tags_split:
-        center_coo = factory.getCenterOfMass(*dimTag)
-        if np.isclose(center_coo[2], z_water_height):  # intersection in the plane, we do not want that
-            pass
-        elif center_coo[2] > z_water_height:
-            upper_l = dimTag[1]
-        else:
-            lower_l = dimTag[1]
-
-    # the same thing for the other side
-    out_tags_split, _ = factory.fragment(
-        [(2, slope_face_right_tag)], # Objects to split
-        [(2, cutting_plane_surface)],  # Tool
-    )
-
-    upper_r, lower_r = -1, -1
-    for dimTag in out_tags_split:
-        center_coo = factory.getCenterOfMass(*dimTag)
-        if np.isclose(center_coo[2], z_water_height):
-            pass
-        elif center_coo[2] > z_water_height:
-            upper_r = dimTag[1]
-        else:
-            lower_r = dimTag[1]
-
-    # remove the auxiliary plane
-    factory.remove([(2, cutting_plane_surface)], recursive=True)
-    factory.synchronize()
+    upper_l, lower_l = intersect_with_z_level_plane(z_level=z_water_height, face_to_cut_id=slope_face_left_tag)
+    upper_r, lower_r = intersect_with_z_level_plane(z_level=z_water_height, face_to_cut_id=slope_face_right_tag)
 
     # deal with the cut at x = 0
     all_faces = gmsh.model.getEntities(dim=2)
     max_z_center = -1
-    x0_faces = []
+    x0_faces = []  # will contain the wet x0 faces
     # we must pick the correct face to cut depending on z_solid_water_level!
     # currently provided by naked eye that the cut is in the topmost face
     for dim, tag in all_faces:
@@ -184,40 +171,11 @@ def create_mesh(file_name='slope_with_waterlevels',
             if max_z_center < center_coo[2]:
                 max_z_center = center_coo[2]
                 top_face = tag
-    x0_faces.remove(top_face)
+    x0_faces.remove(top_face)  # top face will be cut into two, we add the resulting lower face
 
-    # create another auxiliray plane, shameless copy&paste
-    z_water_height = z_solid_water_level
-    eps = 10
-    p1 = factory.add_point(0-eps, 0-eps, z_water_height); p2 = factory.add_point(x_sum+eps, 0-eps, z_water_height)
-    p3 = factory.add_point(x_sum+eps, y_sum+eps, z_water_height); p4 = factory.add_point(0-eps, y_sum+eps, z_water_height)
-    cutting_plane_loop = factory.add_curve_loop([factory.add_line(p1,p2), factory.add_line(p2,p3), factory.add_line(p3,p4), factory.add_line(p4,p1)])
-    cutting_plane_surface = factory.add_plane_surface([cutting_plane_loop])
-
-    out_tags_split, _ = factory.fragment(
-        [(2, top_face)], # Objects to split
-        [(2, cutting_plane_surface)],  # Tool
-    )
-
-    upper_x0, lower_x0 = -1, -1
-    for dimTag in out_tags_split:
-        center_coo = factory.getCenterOfMass(*dimTag)
-        if np.isclose(center_coo[2], z_water_height):
-            pass
-        elif center_coo[2] < z_water_height:
-            upper_x0 = dimTag[1]
-        else:
-            lower_x0 = dimTag[1]
-
-    # update lower wet faces
+    upper_x0, lower_x0 = intersect_with_z_level_plane(z_level=z_solid_water_level, face_to_cut_id=top_face)
     x0_faces.append(lower_x0)
 
-    # remove the auxiliary plane
-    factory.remove([(2, cutting_plane_surface)], recursive=True)
-    factory.synchronize()
-
-    # mark the rest of the boundary faces
-    all_faces = gmsh.model.getEntities(dim=2)
     positions = {  # name: (axis, coordinate value)
         'x_max': (0, x_sum),
         'y0': (1, 0),
@@ -227,6 +185,7 @@ def create_mesh(file_name='slope_with_waterlevels',
         'zwater_bed': (2, z_layer0+z_layer1)
     }
 
+    # mark the rest of the boundary faces
     face_groups = {}
     for dim, tag in all_faces:
         center_coo = factory.get_center_of_mass(dim, tag)
@@ -259,7 +218,7 @@ def create_mesh(file_name='slope_with_waterlevels',
 
     factory.synchronize()
 
-    # set sizes and generate mesh
+    # set sizes and generate mesh, the background field should probably go somewhere here?
     gmsh.model.mesh.setSize(gmsh.model.getEntities(0), h)
     gmsh.model.mesh.generate(3)
     gmsh.model.mesh.setOrder(order)
