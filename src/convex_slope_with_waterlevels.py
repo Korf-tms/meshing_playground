@@ -4,7 +4,8 @@ import numpy as np
 
 def create_mesh(file_name='slope_with_waterlevels',
                 z_water_height=45, z_solid_water_level=80,
-                h=3):
+                h=3,
+                order=2):
     def box_from_coordinates(coordinates):
         """
         Helper function to generate box from given coordinates of its vertices.
@@ -264,6 +265,7 @@ def create_mesh(file_name='slope_with_waterlevels',
     # set sizes and generate mesh
     gmsh.model.mesh.setSize(gmsh.model.getEntities(0), h)
     gmsh.model.mesh.generate(3)
+    gmsh.model.mesh.setOrder(order)
     gmsh.write(f"{file_name}.msh")
     print(f"Mesh written to {file_name}")
     gmsh.fltk.run()
@@ -271,12 +273,31 @@ def create_mesh(file_name='slope_with_waterlevels',
 
     return name2tag
 
-def transform_to_hdf5(input_file='slope_final.msh'):
-    pass
 
+def transform_to_hdf5(input_file='slope_with_waterlevels.msh', order=2):
+    import meshio
+    import h5py
+    from math import comb
+    triangle_num = '' if order==1 else comb(order+2, 2)
+    tetra_num = '' if order==1 else comb(order+3, 3)
+    mesh = meshio.read(input_file)
+    points = mesh.points
+    tetra_cells = mesh.get_cells_type(f"tetra{tetra_num}")
+    triangles = mesh.get_cells_type(f"triangle{triangle_num}")
+    tetra_labels = mesh.get_cell_data("gmsh:physical", f"tetra{tetra_num}")
+    triangle_labels = mesh.get_cell_data("gmsh:physical", f"triangle{triangle_num}")
 
+    with h5py.File(input_file.replace('.msh', '.h5'), 'w') as f:
+        f.create_dataset('points', data=points, compression='gzip', compression_opts=9)
+        f.create_dataset('tetra_cells', data=tetra_cells.data, compression='gzip', compression_opts=9)
+        f.create_dataset('triangles', data=triangles.data, compression='gzip', compression_opts=9)
+        f.create_dataset('tetra_labels', data=tetra_labels, compression='gzip', compression_opts=9)
+        f.create_dataset('triangle_labels', data=triangle_labels, compression='gzip', compression_opts=9)
 
+    print(f"Transformed mesh saved to {input_file.replace('.msh', '.h5')}")
 
 if __name__ == '__main__':
-    create_mesh()
+    description = create_mesh()
+    for name, tag in description.items():
+        print(f"{name}: {tag}")
     transform_to_hdf5()
