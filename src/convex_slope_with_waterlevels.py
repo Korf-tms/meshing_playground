@@ -142,15 +142,14 @@ def create_mesh(file_name='slope_with_waterlevels',
     )
     # The output will contain the new upper and lower face parts, and the new intersection object.
     upper_l, lower_l = -1, -1
-    for item in out_tags_split:
-        center_coo = factory.getCenterOfMass(*item)
+    for dimTag in out_tags_split:
+        center_coo = factory.getCenterOfMass(*dimTag)
         if np.isclose(center_coo[2], z_water_height):  # intersection in the plane, we do not want that
             pass
         elif center_coo[2] > z_water_height:
-            upper_l = item[1]
+            upper_l = dimTag[1]
         else:
-            lower_l = item[1]
-    print(upper_l, lower_l)
+            lower_l = dimTag[1]
 
     # the same thing for the other side
     out_tags_split, _ = factory.fragment(
@@ -159,15 +158,14 @@ def create_mesh(file_name='slope_with_waterlevels',
     )
 
     upper_r, lower_r = -1, -1
-    for item in out_tags_split:
-        center_coo = factory.getCenterOfMass(*item)
+    for dimTag in out_tags_split:
+        center_coo = factory.getCenterOfMass(*dimTag)
         if np.isclose(center_coo[2], z_water_height):
             pass
         elif center_coo[2] > z_water_height:
-            upper_r = item[1]
+            upper_r = dimTag[1]
         else:
-            lower_r = item[1]
-    print(upper_r, lower_r)
+            lower_r = dimTag[1]
 
     # remove the auxiliary plane
     factory.remove([(2, cutting_plane_surface)], recursive=True)
@@ -187,7 +185,6 @@ def create_mesh(file_name='slope_with_waterlevels',
                 max_z_center = center_coo[2]
                 top_face = tag
     x0_faces.remove(top_face)
-    # print(f"x0_faces: {x0_faces}, top_face: {top_face}")
 
     # create another auxiliray plane, shameless copy&paste
     z_water_height = z_solid_water_level
@@ -203,26 +200,25 @@ def create_mesh(file_name='slope_with_waterlevels',
     )
 
     upper_x0, lower_x0 = -1, -1
-    for item in out_tags_split:
-        center_coo = factory.getCenterOfMass(*item)
+    for dimTag in out_tags_split:
+        center_coo = factory.getCenterOfMass(*dimTag)
         if np.isclose(center_coo[2], z_water_height):
             pass
         elif center_coo[2] < z_water_height:
-            upper_x0 = item[1]
+            upper_x0 = dimTag[1]
         else:
-            lower_x0 = item[1]
-    print(upper_x0, lower_x0)
+            lower_x0 = dimTag[1]
+
+    # update lower wet faces
+    x0_faces.append(lower_x0)
 
     # remove the auxiliary plane
     factory.remove([(2, cutting_plane_surface)], recursive=True)
     factory.synchronize()
-    # update lower wet faces
-    x0_faces.append(lower_x0)
 
     # mark the rest of the boundary faces
     all_faces = gmsh.model.getEntities(dim=2)
-    names = ('x_max', 'y0', 'ymax', 'z0', 'zmax', 'zwater_bed')
-    positions = {
+    positions = {  # name: (axis, coordinate value)
         'x_max': (0, x_sum),
         'y0': (1, 0),
         'ymax': (1, y_sum),
@@ -238,11 +234,12 @@ def create_mesh(file_name='slope_with_waterlevels',
             if np.isclose(center_coo[axis], value):
                 if name not in face_groups:
                     face_groups[name] = []
-                # special case for the water bed, we want only the outer face
+                # special case for the water bed, we want only the boundary face
+                # we know that obundary face is on the right from the end of the slope
                 if name == 'zwater_bed' and center_coo[0] < x_sum - x_down - x_cover:
                     continue
                 face_groups[name].append(tag)
-    print(face_groups)
+
     name2tag = {'bottom_layer': 1, 'middle_layer': 2, 'top_layer': 3, 'cover': 4,
                 'dry_slope': 5, 'wet_slope': 6,
                 'dry_solid': 7, 'wet_solid': 8,
