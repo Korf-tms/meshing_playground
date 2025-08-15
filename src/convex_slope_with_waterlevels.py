@@ -3,6 +3,7 @@ import numpy as np
 
 
 def create_mesh(file_name='slope_with_waterlevels',
+                pos_file=None, scaling_factor=1,
                 z_water_height=35, z_solid_water_level=50,
                 h=3,
                 order=2):
@@ -218,10 +219,47 @@ def create_mesh(file_name='slope_with_waterlevels',
 
     factory.synchronize()
 
-    # set sizes and generate mesh, the background field should probably go somewhere here?
-    gmsh.model.mesh.setSize(gmsh.model.getEntities(0), h)
-    gmsh.model.mesh.generate(3)
+    if pos_file is None:
+        gmsh.model.mesh.setSize(gmsh.model.getEntities(0), h)
+    else:
+        gmsh.merge(pos_file)
+        # Add the post-processing view as a new size field:
+        bg_field = gmsh.model.mesh.field.add("PostView")
+        gmsh.model.mesh.field.setNumber(bg_field, "ViewIndex", 0)
+        # Apply the view as the current background mesh size field:
+        gmsh.model.mesh.field.setAsBackgroundMesh(bg_field)
+
+        # TODO: find out what exactly "scaling factor" does
+        gmsh.option.setNumber("Mesh.MeshSizeFactor", scaling_factor) # Factor applied to all mesh element sizes
+        gmsh.option.setNumber("Mesh.MeshSizeMin", 0.5)  # default 0
+        # gmsh.option.setNumber("Mesh.MeshSizeMax", 2)  # default 1e22
+
+        # Extend computation of mesh element sizes from the boundaries into the interior
+        # (0: never; 1: for surfaces and volumes; 2: for surfaces and volumes,
+        # but use smallest surface element edge length instead of longest length in 3D Delaunay;
+        # -2: only for surfaces; -3: only for volumes); default 1:
+        gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 0)
+
+        # Compute mesh element sizes from values given at geometry points, default 1:
+        gmsh.option.setNumber("Mesh.MeshSizeFromPoints", 0)
+        # Automatically compute mesh element sizes from curvature, using the value as the target
+        # number of elements per 2 * Pi radians; default 0
+        gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 0)
+        gmsh.model.mesh.setSize(gmsh.model.getEntities(0), 1.0)
+
+    # choice of mesh algorithms, not sure if this is needed
+    # gmsh.option.setNumber("Mesh.Algorithm3D", 1)
+    # gmsh.option.setNumber("Mesh.Algorithm", 1)
+
+    # this option does not change resulting .msh files
+    # gmsh.option.setNumber("Mesh.SurfaceFaces", 1)
+    # gmsh.option.setNumber("Mesh.VolumeEdges", 0)
+
+    gmsh.model.mesh.generate(dim=3)
     gmsh.model.mesh.setOrder(order)
+    gmsh.model.mesh.remove_duplicate_elements()
+    gmsh.model.mesh.remove_duplicate_nodes()
+
     gmsh.write(f"{file_name}.msh")
     print(f"Mesh written to {file_name}")
     gmsh.fltk.run()
