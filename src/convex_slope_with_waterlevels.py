@@ -136,6 +136,8 @@ def write_hdf5_surfaces_from_phys_entities(out_path='slope_with_waterlevels.h5')
           f"tets={tets_out.shape[0]} | tris={tris_out.shape[0]} | span≈{span}")
 
 def create_mesh(file_name='slope_with_waterlevels',
+                pos_file=None, scaling_factor=1.0,
+                show_gui=False,
                 z_water_height=35, z_solid_water_level=50,
                 h=20,
                 order=2):
@@ -247,16 +249,15 @@ def create_mesh(file_name='slope_with_waterlevels',
     cutting_plane_water = factory.add_plane_surface([cl_water])
     
     covers_to_cut = [(3, cover_left), (3, cover_right)]
-    out_tags_front, cut_map_covers = factory.fragment(covers_to_cut, [(2, cutting_plane_water)], removeTool=True)
+    out_tags_front, _ = factory.fragment(covers_to_cut, [(2, cutting_plane_water)], removeTool=True)
     factory.synchronize()
+
     # Remove the cutting plane surface from the output tags.
     for dimTag in out_tags_front:
         if dimTag[0] == 2:
             factory.remove([dimTag], recursive=True)
-            out_tags_front.remove(dimTag)
             factory.synchronize()
-            break
-    factory.synchronize()
+    out_tags_front = [tag for tag in out_tags_front if tag[0] == 3]
 
     # --- CUT THE TOP LAYER VOLUME ---
     p5 = factory.add_point(0-eps, 0-eps, z_solid_water_level); p6 = factory.add_point(x_sum+eps, 0-eps, z_solid_water_level)
@@ -264,15 +265,14 @@ def create_mesh(file_name='slope_with_waterlevels',
     cl_solid = factory.add_curve_loop([factory.add_line(p5,p6), factory.add_line(p6,p7), factory.add_line(p7,p8), factory.add_line(p8,p5)])
     cutting_plane_solid = factory.add_plane_surface([cl_solid])
 
-    out_tags_top, cut_map_top = factory.fragment([(3, top_layer_final)], [(2, cutting_plane_solid)], removeTool=True)
+    out_tags_top, _ = factory.fragment([(3, top_layer_final)], [(2, cutting_plane_solid)], removeTool=True)
+
     # Remove the cutting plane surface from the output tags.
     for dimTag in out_tags_top:
         if dimTag[0] == 2:
             factory.remove([dimTag], recursive=True)
-            out_tags_top.remove(dimTag)
             factory.synchronize()
-            break
-    factory.synchronize()
+    out_tags_top = [tag for tag in out_tags_top if tag[0] == 3]
     
     # --- 6. FINAL GLOBAL STITCHING ---
     # This step takes all the final volume parts (some pre-cut, some untouched)
@@ -333,7 +333,38 @@ def create_mesh(file_name='slope_with_waterlevels',
         gmsh.model.addPhysicalGroup(group.dim, group.tags, tag=group.group_tag, name=group.name)
 
     # --- 8. MESHING ---
-    gmsh.model.mesh.setSize(gmsh.model.getEntities(0), h)
+
+    if pos_file is None:
+        gmsh.model.mesh.setSize(gmsh.model.getEntities(0), h)
+    else:
+        gmsh.merge(pos_file)
+        # Add the post-processing view as a new size field:
+        bg_field = gmsh.model.mesh.field.add("PostView")
+        gmsh.model.mesh.field.setNumber(bg_field, "ViewIndex", 0)
+        # Apply the view as the current background mesh size field:
+        gmsh.model.mesh.field.setAsBackgroundMesh(bg_field)
+
+        # TODO: find out what exactly "scaling factor" does
+        gmsh.option.setNumber("Mesh.MeshSizeFactor", scaling_factor) # Factor applied to all mesh element sizes
+        gmsh.option.setNumber("Mesh.MeshSizeMin", 0.5)  # default 0
+        # gmsh.option.setNumber("Mesh.MeshSizeMax", 2)  # default 1e22
+        # Extend computation of mesh element sizes from the boundaries into the interior
+        # (0: never; 1: for surfaces and volumes; 2: for surfaces and volumes,
+        # but use smallest surface element edge length instead of longest length in 3D Delaunay;
+        # -2: only for surfaces; -3: only for volumes); default 1:
+        gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 0)
+
+        # Compute mesh element sizes from values given at geometry points, default 1:
+        gmsh.option.setNumber("Mesh.MeshSizeFromPoints", 0)
+        # Automatically compute mesh element sizes from curvature, using the value as the target
+        # number of elements per 2 * Pi radians; default 0
+        gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 0)
+        gmsh.model.mesh.setSize(gmsh.model.getEntities(0), 1.0)
+
+
+    # gmsh.option.setNumber("Mesh.Algorithm3D", 1)
+    # gmsh.option.setNumber("Mesh.Algorithm", 1)
+
     gmsh.model.mesh.generate(3)
     gmsh.model.mesh.setOrder(order)
     gmsh.model.mesh.remove_duplicate_elements()
@@ -346,8 +377,8 @@ def create_mesh(file_name='slope_with_waterlevels',
     # gmsh.write(f"{file_name}.msh")
     # print(f"Mesh written to {file_name}.msh")
     
-    # Launch the GUI to inspect the final mesh
-    # gmsh.fltk.run()
+    if show_gui:
+        gmsh.fltk.run()
 
     write_hdf5_surfaces_from_phys_entities(f"{file_name}.h5")
 
@@ -379,5 +410,4 @@ def transform_to_hdf5(input_file='slope_with_waterlevels.msh'):
     print(f"Transformed mesh saved to {input_file.replace('.msh', '.h5')}")
 
 if __name__ == "__main__":
-    create_mesh(h=15)
-    # transform_to_hdf5()
+    create_mesh(h=15, show_gui=True, pos_file='SSR_ALG3_hetero_ada_L2.pos', scaling_factor=5.0)
