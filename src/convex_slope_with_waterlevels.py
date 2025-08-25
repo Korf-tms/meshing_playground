@@ -143,8 +143,7 @@ def create_mesh(file_name='slope_with_waterlevels',
                 order=2):
     """
     Generates a conforming mesh for a sloped geometry with specific boundaries
-    cut at different water levels. This version focuses only on generating the
-    correct geometry and mesh, without assigning physical groups.
+    cut at different water levels.
     """
     def box_from_coordinates(coordinates):
         """Helper function to generate a box from given coordinates of its vertices."""
@@ -159,7 +158,7 @@ def create_mesh(file_name='slope_with_waterlevels',
             surfaces.append(factory.add_plane_surface([cl]))
         sl = factory.add_surface_loop(surfaces)
         return factory.add_volume([sl])
-    
+
     def find_outer_slope_face(volume_tag):
         """
         Finds the single "outer" sloped face of a volume by checking two criteria:
@@ -247,7 +246,7 @@ def create_mesh(file_name='slope_with_waterlevels',
     p3 = factory.add_point(x_sum+eps, y_sum+eps, z_water_height); p4 = factory.add_point(0-eps, y_sum+eps, z_water_height)
     cl_water = factory.add_curve_loop([factory.add_line(p1,p2), factory.add_line(p2,p3), factory.add_line(p3,p4), factory.add_line(p4,p1)])
     cutting_plane_water = factory.add_plane_surface([cl_water])
-    
+
     covers_to_cut = [(3, cover_left), (3, cover_right)]
     out_tags_front, _ = factory.fragment(covers_to_cut, [(2, cutting_plane_water)], removeTool=True)
     factory.synchronize()
@@ -273,7 +272,7 @@ def create_mesh(file_name='slope_with_waterlevels',
             factory.remove([dimTag], recursive=True)
             factory.synchronize()
     out_tags_top = [tag for tag in out_tags_top if tag[0] == 3]
-    
+
     # --- 6. FINAL GLOBAL STITCHING ---
     # This step takes all the final volume parts (some pre-cut, some untouched)
     # and makes all their shared boundaries conformal.
@@ -318,7 +317,7 @@ def create_mesh(file_name='slope_with_waterlevels',
                     groups['dry_solid'].tags.append(tag)
                 else:
                     raise ValueError(f"Unexpected face at x=0 with center at z={center_coo[2]}")
-    
+
     # faces at the slope
     for dim, tag in out_tags_front:
         center_coo = factory.get_center_of_mass(dim, tag)
@@ -328,7 +327,7 @@ def create_mesh(file_name='slope_with_waterlevels',
         else:
             groups['wet_slope'].tags.append(boundary_face)
 
-    # add physical groups to the model    
+    # add physical groups to the model
     for _, group in groups.items():
         gmsh.model.addPhysicalGroup(group.dim, group.tags, tag=group.group_tag, name=group.name)
 
@@ -359,7 +358,6 @@ def create_mesh(file_name='slope_with_waterlevels',
         # Automatically compute mesh element sizes from curvature, using the value as the target
         # number of elements per 2 * Pi radians; default 0
         gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 0)
-        gmsh.model.mesh.setSize(gmsh.model.getEntities(0), 1.0)
 
 
     # gmsh.option.setNumber("Mesh.Algorithm3D", 1)
@@ -376,7 +374,7 @@ def create_mesh(file_name='slope_with_waterlevels',
 
     # gmsh.write(f"{file_name}.msh")
     # print(f"Mesh written to {file_name}.msh")
-    
+
     if show_gui:
         gmsh.fltk.run()
 
